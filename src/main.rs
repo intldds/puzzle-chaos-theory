@@ -9,7 +9,9 @@ use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use sha2::Sha256;
 use std::{fs::File, io::Read, ops::Mul};
 
-use prompt::{puzzle, welcome};
+use prompt::{welcome};
+
+use log::{warn};
 
 #[derive(Debug)]
 pub enum Error {
@@ -21,11 +23,11 @@ fn hasher() -> MapToCurveBasedHasher<G2Projective, DefaultFieldHasher<Sha256, 12
         MapToCurveBasedHasher::<G2Projective, DefaultFieldHasher<Sha256, 128>, WBMap<Config>>::new(
             &[1, 3, 3, 7],
         )
-        .unwrap();
+            .unwrap();
     wb_to_curve_hasher
 }
 
-#[derive(CanonicalSerialize, CanonicalDeserialize)]
+#[derive(CanonicalSerialize, CanonicalDeserialize, Clone)]
 pub struct ElGamal(G1Affine, G1Affine);
 
 impl ElGamal {
@@ -104,10 +106,10 @@ fn generate_message_space() -> [Message; 10] {
 }
 
 pub fn main() {
+    env_logger::init_from_env(env_logger::Env::default().default_filter_or("info"));
     welcome();
-    puzzle(PUZZLE_DESCRIPTION);
 
-    let messages = generate_message_space();
+    let _messages = generate_message_space();
 
     let mut file = File::open("blob.bin").unwrap();
     let mut data = Vec::new();
@@ -117,13 +119,33 @@ pub fn main() {
     // ensure that blob is correct
     assert!(Auditor::check_auth(blob.sender_pk, &blob.c, blob.s));
 
-    /* Implement your attack here, to find the index of the encrypted message */
+    // Implement your attack here, to find the index of the encrypted message
+    let c = blob.c.clone();
+    let c1 = blob.c.1.clone();
+    let s = blob.s;
+    let rec_pk = blob.rec_pk;
 
-    unimplemented!();
+    for (i, m) in _messages.iter().enumerate() {
+        let difference = c1 - m.0;
 
-    /* End of attack */
+        if check_authentication(difference.into_affine(), &c, s, rec_pk) {
+            warn!("index is: {}", i);
+            break;
+        }
+    }
 }
 
-const PUZZLE_DESCRIPTION: &str = r"
-Bob designed a new one time scheme, that's based on the tried and true method of encrypt + sign. He combined ElGamal encryption with BLS signatures in a clever way, such that you use pairings to verify the encrypted message was not tampered with. Alice, then, figured out a way to reveal the plaintexts...
-";
+fn check_authentication(s1s2_G: G1Affine, c: &ElGamal, s: G2Affine, receiver_pk: G1Affine) -> bool {
+
+    // calculate the pairing of the generator of G1 and the G2 element
+    let p1 = { Bls12_381::pairing(receiver_pk, s) };
+
+    // hash the ElGamal ciphertext to a point in G2
+    let hashed_curve = c.hash_to_curve();
+
+    // calculate the pairing of an affine point in G1 and a point in G2
+    let p2 = { Bls12_381::pairing(s1s2_G, hashed_curve) };
+
+    // returns true
+    p1 == p2
+}
